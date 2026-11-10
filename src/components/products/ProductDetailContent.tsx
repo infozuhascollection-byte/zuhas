@@ -6,7 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useCart } from "@/components/cart/CartProvider";
 import Price from "@/components/currency/Price";
-import { CloseIcon, ExpandIcon, HeartIcon } from "@/components/icons";
+import {
+  CloseIcon,
+  ExpandIcon,
+  HeartIcon,
+  RulerIcon,
+} from "@/components/icons";
 import FormattedDescription from "@/components/products/FormattedDescription";
 import FadeInImage from "@/components/ui/FadeInImage";
 import PopOnChange from "@/components/ui/PopOnChange";
@@ -18,6 +23,7 @@ import {
   effectivePrice,
   pairImagesWithColors,
 } from "@/lib/products";
+import type { SizeChart } from "@/lib/size-chart";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,6 +33,16 @@ import { cn } from "@/lib/utils";
  */
 const ProductImageViewer = dynamic(
   () => import("@/components/products/ProductImageViewer"),
+  { ssr: false },
+);
+
+/**
+ * The size chart modal is only fetched when the customer asks for it, so the
+ * detail page and the Quick View do not carry the table's code up front. It
+ * portals itself above the Quick View; see `SizeChartModal.tsx`.
+ */
+const SizeChartModal = dynamic(
+  () => import("@/components/products/SizeChartModal"),
   { ssr: false },
 );
 
@@ -88,6 +104,8 @@ export type ProductDetailData = {
    * to the first image whose tag matches.
    */
   imageColors: string[];
+  /** Optional per-product size chart (migration 023); null hides the link. */
+  sizeChart: SizeChart | null;
   createdAt: string;
   category: {
     slug: string;
@@ -129,6 +147,9 @@ export default function ProductDetailContent({
   // Which slide the swipeable gallery is on, and whether it is blown up.
   const [slideIndex, setSlideIndex] = useState(0);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [sizeChartOpen, setSizeChartOpen] = useState(false);
+  // The chart's chunk is fetched on the first open, not with the page.
+  const [sizeChartMounted, setSizeChartMounted] = useState(false);
   const sliderRef = useRef<HTMLDivElement>(null);
   const expandButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -149,6 +170,8 @@ export default function ProductDetailContent({
     setAdded(false);
     setSlideIndex(0);
     setViewerOpen(false);
+    setSizeChartOpen(false);
+    setSizeChartMounted(false);
   }
 
   // Clear the transient "Added to cart" timer when this instance goes away.
@@ -622,6 +645,20 @@ export default function ProductDetailContent({
           </div>
         ) : null}
 
+        {product.sizeChart ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSizeChartMounted(true);
+              setSizeChartOpen(true);
+            }}
+            className="flex w-fit items-center gap-1.5 text-sm text-plum underline decoration-plum/40 underline-offset-4 transition-colors hover:text-plum-dark hover:decoration-plum focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum"
+          >
+            <RulerIcon width={16} height={16} />
+            Size Chart
+          </button>
+        ) : null}
+
         {needsColor ? (
           <div className="flex flex-col gap-2">
             <span className="text-xs uppercase tracking-[0.16em] text-black/60">
@@ -736,6 +773,15 @@ export default function ProductDetailContent({
         isOpen={viewerOpen}
         onClose={closeViewer}
       />
+
+      {product.sizeChart && sizeChartMounted ? (
+        <SizeChartModal
+          productName={product.name}
+          chart={product.sizeChart}
+          isOpen={sizeChartOpen}
+          onClose={() => setSizeChartOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

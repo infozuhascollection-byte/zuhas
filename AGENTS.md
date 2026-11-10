@@ -353,3 +353,23 @@ Non-negotiable rules for every animation added from here on.
 - **Animated elements:** hamburger→X morph (`MenuMorphIcon`), menu/search/cart popups (`NavbarPopover`), the menu drawer and its staggered items + chevron accordion, search-result and cart-item staggers, the cart-count badge pop and wishlist-heart pop (`PopOnChange`), the product-card gallery hover (the premium two-image swap: second image settles 1.08→1 with the first fading out, or the restored single-image zoom; both 0.8s on `--motion-ease`) with the instantly-revealed wishlist/quick-view/Add-to-Cart controls, quick-view and filter modals/drawers, the shared storefront image fade-in (`FadeInImage`), the admin drawer + staggered sidebar, admin dialogs and the admin feedback message. The homepage category slider, adaptive header tone, button hover fills and the product image viewer keep their existing behavior untouched.
 - **Image fade-in.** Storefront `next/image` components go through `FadeInImage` (300ms fade over a `bg-black/5` placeholder, `img.complete` check for cached images, `priority` skips the fade). Admin screens keep plain `next/image`.
 - **No new animation library, and do not add** page-transition fades, scroll-reveal for cards or parallax.
+
+---
+
+## 14. Size Chart (added 2026-11-10, migration 023)
+
+Optional per-product measurement chart. All measurements are stored in **inches**; centimetres are derived for display only.
+
+- **Database.** `supabase/migrations/023_product_size_chart.sql` adds one nullable `jsonb` column, `products.size_chart` (`add column if not exists`, default null). No new table and no extra grants are needed — table-level grants cover new columns. Shape:
+  ```json
+  {
+    "title": "Waistcoat",
+    "columns": ["XS", "S", "M", "L", "XL", "XXL"],
+    "rows": [{ "label": "Chest", "values": ["47", "49.5", "52.1", "54.6", "57.1", "59.7"] }],
+    "notes": "plain text, one note per line"
+  }
+  ```
+- **Shared rules.** `src/lib/size-chart.ts` holds the `SizeChart` / `SizeChartRow` types, `normalizeSizeChart` (defensive read: trims, drops blank columns **with their own values**, pads every row to the column count, returns null when there are no columns or labeled rows), `convertMeasurement` (CM = inches × 2.54, one decimal; non-numbers shown as typed), and `sizeChartNotes`.
+- **Storefront data.** `ProductDetail.sizeChart` is returned by `getProductBySlug` through the existing `unstable_cache` (`products` / `product:<slug>` tags) and mapped by `mapProductDetailToData`, so the product detail page **and** Quick View receive it. If migration 023 has not been applied, the loader retries without the column and reads "no size chart" instead of failing. Product create/update already calls `revalidateStorefront()`, which expires those tags.
+- **Admin.** The Products form has an optional **Size Chart** section at the bottom (`src/components/admin/SizeChartFields.tsx`): chart title, columns (add/remove free-text size names), rows (measurement name + one value per column, add/remove) and a notes textarea (one note per line). Helper text: "Enter all measurements in inches. CM is calculated automatically." The edit form loads the saved chart. `readSizeChart` in `src/lib/admin/validation.ts` re-validates on the server inside `saveProduct`: max 12 columns, max 15 rows, trimmed text, length caps; an empty section, or no columns/labeled rows, saves `NULL`. If the column is missing, the save is retried without it and a warning names the migration.
+- **Customer side.** `ProductDetailContent` (shared by the detail page and Quick View) shows a small underlined **Size Chart** link with a ruler icon directly under the size selection and above Quantity — only when `sizeChart` exists. It opens `SizeChartModal` (`next/dynamic`, portalled to `document.body` at `z-60` above the Quick View's `z-50`) with: product name heading, "Size Charts" subtitle, chart title, a **CM | INCHES** toggle (default INCHES, active option highlighted plum), the table (measurement column sticky-left; sizes beside it; horizontal scroll on mobile) and notes as a bullet list. Square corners, white/black/plum, shared `src/lib/motion.ts` enter/exit. It closes on X, backdrop click and Escape; its Escape listener runs in the capture phase and stops propagation so only the top modal closes, and it locks page scroll.

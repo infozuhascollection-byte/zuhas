@@ -23,6 +23,7 @@ import { requireAdmin } from "@/lib/admin/guard";
 import { uniqueSlug } from "@/lib/admin/queries";
 import { revalidateStorefront } from "@/lib/admin/revalidate";
 import { deleteStoredImages } from "@/lib/admin/storage";
+import type { SizeChart } from "@/lib/size-chart";
 import {
   actionFail,
   actionOk,
@@ -38,6 +39,7 @@ import {
   readOptionList,
   readPrice,
   readRequiredId,
+  readSizeChart,
   type ActionError,
   type ActionResult,
 } from "@/lib/admin/validation";
@@ -61,6 +63,11 @@ export type ProductInput = {
    * so the tag follows its image for free. See migration 017.
    */
   imageColors?: Record<string, string>;
+  /**
+   * Optional size chart (migration 023). The browser sends the shape from
+   * `src/lib/size-chart.ts`; the server re-validates every part of it.
+   */
+  sizeChart?: unknown;
 };
 
 /** One gallery image with its (optional, never null) colour tag. */
@@ -148,16 +155,18 @@ type ProductWriteRow = {
   images: string[];
   /** Optional in the type so a save still compiles before 017 is applied. */
   image_colors?: string[];
+  /** Optional in the type so a save still compiles before 023 is applied. */
+  size_chart?: SizeChart | null;
 };
 
 /**
  * Creates or updates the product row, with one concession to a database that
  * has not been migrated yet.
  *
- * `image_colors` (migration 017) is the only column nothing else in the
- * dashboard depends on. When it is missing, PostgREST refuses the *whole*
- * payload, so the identical write is retried once without the colour tags —
- * an `undefined` key never reaches the JSON body — and the warning names the
+ * `image_colors` (migration 017) and `size_chart` (migration 023) are the two
+ * optional product columns. When either is missing, PostgREST refuses the
+ * *whole* payload, so the identical write is retried without that column — an
+ * `undefined` key never reaches the JSON body — and the warning names the
  * migration to run. The admin's edit is saved rather than lost.
  */
 async function writeProductRow(
@@ -170,18 +179,41 @@ async function writeProductRow(
       ? db.from("products").update(values).eq("id", id)
       : db.from("products").insert({ ...values, is_active: true, is_featured: false });
 
-  const response = await attempt(row);
+  let values = row;
 
-  if (!response.error || !isMissingImageColorsColumn(response.error)) {
+  // At most two retries: one per optional column. Each branch removes a key,
+  // so this always terminates.
+  for (;;) {
+    const response = await attempt(values);
+
+    if (!response.error) return response;
+
+    if (
+      values.image_colors !== undefined &&
+      isMissingImageColorsColumn(response.error)
+    ) {
+      console.warn(
+        "[admin] products.image_colors is missing, so the colour tags were not saved. " +
+          "Run supabase/migrations/017_product_image_color.sql.",
+      );
+      values = { ...values, image_colors: undefined };
+      continue;
+    }
+
+    if (
+      values.size_chart !== undefined &&
+      isMissingSizeChartColumn(response.error)
+    ) {
+      console.warn(
+        "[admin] products.size_chart is missing, so the size chart was not saved. " +
+          "Run supabase/migrations/023_product_size_chart.sql.",
+      );
+      values = { ...values, size_chart: undefined };
+      continue;
+    }
+
     return response;
   }
-
-  console.warn(
-    "[admin] products.image_colors is missing, so the colour tags were not saved. " +
-      "Run supabase/migrations/017_product_image_color.sql.",
-  );
-
-  return attempt({ ...row, image_colors: undefined });
 }
 
 /**
@@ -198,6 +230,20 @@ function isMissingImageColorsColumn(error: {
   const message = error.message ?? "";
   return (
     /image_colors/i.test(message) &&
+    /(column|does not exist|not found)/i.test(message)
+  );
+}
+
+/** `products.size_chart` arrives with migration 023. */
+function isMissingSizeChartColumn(error: {
+  code?: string | null;
+  message?: string | null;
+}) {
+  if (error.code !== "42703" && error.code !== "PGRST204") return false;
+
+  const message = error.message ?? "";
+  return (
+    /size_chart/i.test(message) &&
     /(column|does not exist|not found)/i.test(message)
   );
 }
@@ -249,6 +295,9 @@ export async function saveProduct(input: ProductInput): Promise<ActionResult> {
 
   const gallery = readGallery(input?.images, input?.imageColors);
   if (!gallery.ok) return gallery;
+
+  const sizeChart = readSizeChart(input?.sizeChart);
+  if (!sizeChart.ok) return sizeChart;
 
   const db = getAdminDb();
 
@@ -341,6 +390,8 @@ export async function saveProduct(input: ProductInput): Promise<ActionResult> {
     // Same length as `images`, "" for an untagged image, never null — the
     // two arrays are written together so a colour can never shift sideways.
     image_colors: gallery.value.map((entry) => entry.color),
+    // Null when the chart is empty, has no columns or has no labelled rows.
+    size_chart: sizeChart.value,
   };
 
   if (id) {

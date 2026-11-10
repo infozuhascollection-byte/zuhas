@@ -10,6 +10,8 @@
  * import it as well as server code.
  */
 
+import type { SizeChart, SizeChartRow } from "@/lib/size-chart";
+
 /** A refusal an admin can act on, safe to render as-is. */
 export type ActionError = { ok: false; error: string };
 
@@ -103,6 +105,17 @@ export const MAX_POLICY_LENGTH = 40000;
 
 /** One gallery image's optional colour tag (migration 017), e.g. "Black". */
 export const MAX_IMAGE_COLOR_LENGTH = 40;
+
+/**
+ * The size chart limits (migration 023). The admin form stops at the same
+ * numbers, and the server action re-checks them.
+ */
+export const MAX_SIZE_CHART_COLUMNS = 12;
+export const MAX_SIZE_CHART_ROWS = 15;
+export const MAX_SIZE_CHART_TITLE_LENGTH = 80;
+export const MAX_SIZE_CHART_LABEL_LENGTH = 40;
+export const MAX_SIZE_CHART_VALUE_LENGTH = 20;
+export const MAX_SIZE_CHART_NOTES_LENGTH = 1000;
 
 /**
  * One trimmed line of text, at most `maxLength` characters.
@@ -251,6 +264,135 @@ export function readOptionList(
   }
 
   return { ok: true, value: options };
+}
+
+/**
+ * The optional per-product size chart (migration 023).
+ *
+ * `null`, an empty chart, no columns or no labelled rows all mean "this product
+ * has no size chart", which is stored as NULL. Anything else is rebuilt field by
+ * field: every value is a trimmed string, every row is padded/cut to the column
+ * count so `values[i]` always belongs to `columns[i]`, and the column/row counts
+ * and text lengths are capped here as well as in the form.
+ */
+export function readSizeChart(
+  value: unknown,
+): { ok: true; value: SizeChart | null } | ActionError {
+  if (value === undefined || value === null) return { ok: true, value: null };
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return actionFail("The size chart could not be read.");
+  }
+
+  const raw = value as {
+    title?: unknown;
+    columns?: unknown;
+    rows?: unknown;
+    notes?: unknown;
+  };
+
+  if (raw.columns !== undefined && !Array.isArray(raw.columns)) {
+    return actionFail("The size chart columns could not be read.");
+  }
+
+  if (raw.rows !== undefined && !Array.isArray(raw.rows)) {
+    return actionFail("The size chart rows could not be read.");
+  }
+
+  const title = typeof raw.title === "string" ? raw.title.trim() : "";
+  if (title.length > MAX_SIZE_CHART_TITLE_LENGTH) {
+    return actionFail(
+      `The size chart title must be ${MAX_SIZE_CHART_TITLE_LENGTH} characters or fewer.`,
+    );
+  }
+
+  const columnEntries: { name: string; sourceIndex: number }[] = [];
+  let columnTooLong = false;
+
+  const rawColumns = Array.isArray(raw.columns) ? raw.columns : [];
+
+  rawColumns.forEach((entry, sourceIndex) => {
+    const name = typeof entry === "string" ? entry.trim() : "";
+    if (!name) return;
+
+    if (name.length > MAX_SIZE_CHART_LABEL_LENGTH) {
+      columnTooLong = true;
+      return;
+    }
+
+    columnEntries.push({ name, sourceIndex });
+  });
+
+  if (columnTooLong) {
+    return actionFail(
+      `Each size column must be ${MAX_SIZE_CHART_LABEL_LENGTH} characters or fewer.`,
+    );
+  }
+
+  const columns = columnEntries.map((entry) => entry.name);
+
+  if (columns.length > MAX_SIZE_CHART_COLUMNS) {
+    return actionFail(
+      `A size chart can have at most ${MAX_SIZE_CHART_COLUMNS} columns.`,
+    );
+  }
+
+  const rows: SizeChartRow[] = [];
+
+  for (const entry of Array.isArray(raw.rows) ? raw.rows : []) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return actionFail("The size chart rows could not be read.");
+    }
+
+    const row = entry as { label?: unknown; values?: unknown };
+    const label = typeof row.label === "string" ? row.label.trim() : "";
+
+    // An empty row is what the form shows before the admin types anything.
+    if (!label) continue;
+
+    if (label.length > MAX_SIZE_CHART_LABEL_LENGTH) {
+      return actionFail(
+        `Each measurement name must be ${MAX_SIZE_CHART_LABEL_LENGTH} characters or fewer.`,
+      );
+    }
+
+    const rawValues = Array.isArray(row.values) ? row.values : [];
+    const values = columnEntries.map((column) => {
+      const entry = rawValues[column.sourceIndex];
+      return typeof entry === "string" ? entry.trim() : "";
+    });
+
+    if (values.some((entry) => entry.length > MAX_SIZE_CHART_VALUE_LENGTH)) {
+      return actionFail(
+        `Each measurement value must be ${MAX_SIZE_CHART_VALUE_LENGTH} characters or fewer.`,
+      );
+    }
+
+    rows.push({ label, values });
+  }
+
+  if (rows.length > MAX_SIZE_CHART_ROWS) {
+    return actionFail(
+      `A size chart can have at most ${MAX_SIZE_CHART_ROWS} rows.`,
+    );
+  }
+
+  const notes =
+    typeof raw.notes === "string"
+      ? raw.notes.replace(/\r\n?/g, "\n").trim()
+      : "";
+
+  if (notes.length > MAX_SIZE_CHART_NOTES_LENGTH) {
+    return actionFail(
+      `Size chart notes must be ${MAX_SIZE_CHART_NOTES_LENGTH} characters or fewer.`,
+    );
+  }
+
+  if (columns.length === 0 || rows.length === 0) {
+    return { ok: true, value: null };
+  }
+
+  return { ok: true, value: { title, columns, rows, notes } };
 }
 
 /** An optional image URL: http(s) only, so nothing odd reaches an `img src`. */

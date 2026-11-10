@@ -26,6 +26,7 @@ import {
   type StorePolicySlug,
 } from "@/lib/policy-types";
 import { isLowStock, pairImagesWithColors } from "@/lib/products";
+import { normalizeSizeChart, type SizeChart } from "@/lib/size-chart";
 
 export type AdminSubCategory = {
   id: string;
@@ -86,6 +87,8 @@ export type AdminProduct = {
    * key its per-thumbnail inputs by URL without any shifting.
    */
   imageColors: string[];
+  /** Optional size chart (migration 023); null when the product has none. */
+  sizeChart: SizeChart | null;
   isActive: boolean;
 };
 
@@ -199,7 +202,7 @@ export async function listAdminProducts(
     db
       .from("products")
       .select(
-        "id, name, slug, sku, description, category_id, sub_category_id, price, discount_price, sizes, color, stock_quantity, low_stock_threshold, images, image_colors, is_active",
+        "id, name, slug, sku, description, category_id, sub_category_id, price, discount_price, sizes, color, stock_quantity, low_stock_threshold, images, image_colors, size_chart, is_active",
       )
       .order("created_at", { ascending: false })
       .range((page - 1) * perPage, page * perPage - 1),
@@ -238,6 +241,7 @@ export async function listAdminProducts(
         lowStockThreshold: product.low_stock_threshold,
         images: gallery.map((entry) => entry.url),
         imageColors: gallery.map((entry) => entry.color),
+        sizeChart: normalizeSizeChart(product.size_chart),
         isActive: product.is_active,
       };
     }),

@@ -5,6 +5,10 @@ import { cache } from "react";
 
 import { CACHE_TAGS, DEFAULT_PUBLIC_REVALIDATE } from "@/lib/cache-tags";
 import { getCategoryPageData } from "@/lib/category-data";
+import {
+  normalizeSizeChart,
+  type SizeChart,
+} from "@/lib/size-chart";
 import { createPublicClient } from "@/lib/supabase/public";
 import {
   pairImagesWithColors,
@@ -113,6 +117,11 @@ export type ProductDetail = {
    * slider can match an image to a colour without guessing.
    */
   imageColors: string[];
+  /**
+   * Optional size chart (migration 023). Null when the product has none, or
+   * when the column has not been added to the database yet.
+   */
+  sizeChart: SizeChart | null;
   createdAt: string;
   category: {
     slug: string;
@@ -391,6 +400,17 @@ function isMissingSkuColumnError(error: {
   );
 }
 
+/** `products.size_chart` arrives with migration 023. */
+function isMissingSizeChartColumnError(error: {
+  code?: string;
+  message?: string;
+}): boolean {
+  return (
+    (error.code === "42703" || error.code === "PGRST204") &&
+    /size_chart/i.test(error.message ?? "")
+  );
+}
+
 async function loadProductListing(
   scope: ListingScope,
 ): Promise<ProductListingData | null> {
@@ -436,6 +456,8 @@ type ProductDetailRow = {
   images: string[] | null;
   /** Absent when migration 017 has not been applied yet. */
   image_colors?: string[] | null;
+  /** Absent when migration 023 has not been applied yet. */
+  size_chart?: unknown;
   created_at: string;
   category: unknown;
   sub_category: unknown;
@@ -476,6 +498,7 @@ function fromDatabaseDetailRow(row: ProductDetailRow): ProductDetail {
     colors: parseOptionList(row.color),
     images: gallery.map((entry) => entry.url),
     imageColors: gallery.map((entry) => entry.color),
+    sizeChart: normalizeSizeChart(row.size_chart),
     createdAt: row.created_at,
     category: toCategoryLink(row.category),
     subCategory: toCategoryLink(row.sub_category),
@@ -488,8 +511,11 @@ async function loadProductBySlug(slug: string): Promise<ProductDetail | null> {
     let includeSku = true;
     let includeColor = true;
     let includeImageColors = true;
+    let includeSizeChart = true;
 
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // Worst case: the four optional columns (sku, image_colors, color,
+    // size_chart) are all missing, so each is dropped one at a time.
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       const columns = [
         "id",
         "name",
@@ -503,6 +529,7 @@ async function loadProductBySlug(slug: string): Promise<ProductDetail | null> {
         ...(includeColor ? ["color"] : []),
         "images",
         ...(includeImageColors ? ["image_colors"] : []),
+        ...(includeSizeChart ? ["size_chart"] : []),
         "created_at",
         "category:categories(id, slug, name)",
         "sub_category:sub_categories(id, slug, name)",
@@ -526,6 +553,11 @@ async function loadProductBySlug(slug: string): Promise<ProductDetail | null> {
             "[product-data] product colour columns are missing; apply supabase/migrations/004_add_product_color.sql and 017_product_image_color.sql.",
           );
         }
+        if (!includeSizeChart) {
+          console.warn(
+            "[product-data] products.size_chart is missing; apply supabase/migrations/023_product_size_chart.sql to enable size charts.",
+          );
+        }
         return data
           ? fromDatabaseDetailRow(data as unknown as ProductDetailRow)
           : null;
@@ -533,6 +565,11 @@ async function loadProductBySlug(slug: string): Promise<ProductDetail | null> {
 
       if (includeSku && isMissingSkuColumnError(error)) {
         includeSku = false;
+        continue;
+      }
+
+      if (includeSizeChart && isMissingSizeChartColumnError(error)) {
+        includeSizeChart = false;
         continue;
       }
 

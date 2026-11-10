@@ -19,6 +19,12 @@ import {
   useUploadBusy,
 } from "@/components/admin/admin-fields";
 import { ImageGalleryUpload } from "@/components/admin/ImageUpload";
+import SizeChartFields, {
+  emptySizeChartDraft,
+  fromSizeChartDraft,
+  toSizeChartDraft,
+  type SizeChartDraft,
+} from "@/components/admin/SizeChartFields";
 import { deleteProduct, saveProduct } from "@/lib/admin/products";
 import type {
   AdminCategoryOption,
@@ -66,6 +72,8 @@ type ProductDraft = {
    * Keyed rather than indexed because the gallery reorders/removes by URL.
    */
   imageColors: Record<string, string>;
+  /** Optional size chart (migration 023), edited at the bottom of the form. */
+  sizeChart: SizeChartDraft;
 };
 
 export default function ProductsManager({
@@ -146,6 +154,7 @@ export default function ProductsManager({
       lowStockThreshold: "5",
       images: [],
       imageColors: {},
+      sizeChart: emptySizeChartDraft(),
     });
 
   return (
@@ -237,6 +246,7 @@ export default function ProductsManager({
                           product.imageColors[index] ?? "",
                         ]),
                       ),
+                      sizeChart: toSizeChartDraft(product.sizeChart),
                     })
                   }
                   className={ADMIN_SECONDARY_BUTTON_CLASS}
@@ -362,6 +372,7 @@ function ProductForm({
         lowStockThreshold: fields.lowStockThreshold,
         images: fields.images,
         imageColors: fields.imageColors,
+        sizeChart: fromSizeChartDraft(fields.sizeChart),
       });
 
       if (!result.ok) {
@@ -596,6 +607,11 @@ function ProductForm({
               imageColors: { ...current.imageColors, [url]: color },
             }))
           }
+        />
+
+        <SizeChartFields
+          value={fields.sizeChart}
+          onChange={(sizeChart) => set("sizeChart", sizeChart)}
         />
 
         <AdminFeedback status={status} />

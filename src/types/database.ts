@@ -66,6 +66,13 @@ export type Product = {
    * and the storefront still type-check before that migration is applied.
    */
   image_colors?: string[] | null;
+  /**
+   * Optional per-product size chart (migration 023), e.g.
+   * `{ title, columns: string[], rows: [{ label, values: string[] }], notes }`.
+   * All measurements are inches. Optional in the type so the app still
+   * type-checks before that migration is applied.
+   */
+  size_chart?: Json | null;
   is_active: boolean;
   is_featured: boolean;
   created_at: string;

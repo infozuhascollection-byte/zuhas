@@ -92,6 +92,9 @@ export default function ProductCard({ product, priority = false }: ProductCardPr
       colors: product.colors,
       images: product.imageUrl ? [product.imageUrl] : [],
       imageColors: [],
+      // The listing never carries a chart; opening the Quick View re-fetches
+      // the full product from the server, size chart included.
+      sizeChart: null,
       createdAt: product.createdAt,
       category: null,
       subCategory: null,
